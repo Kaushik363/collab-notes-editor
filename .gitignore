@@ -1,0 +1,28 @@
+# dependencies
+node_modules
+npm-debug.log
+yarn.lock
+pnpm-lock.yaml
+
+# environment variables
+.env
+.env.local
+.env.*.local
+
+# build output
+dist
+build
+.next
+
+# logs
+logs
+*.log
+
+# database
+prisma/dev.db
+prisma/*.db
+prisma/*.db-journal
+
+# OS files
+.DS_Store
+Thumbs.db
