@@ -1,14 +1,19 @@
-import { Request, Response } from "express";
+import { Response } from "express";
 import { prisma } from "../prisma/client";
 import { redis } from "../config/redis";
+import { AuthRequest } from "../middlewares/auth.middleware";
 
 // ===============================
 // CREATE NOTE
 // ===============================
-export async function createNote(req: Request, res: Response) {
+export async function createNote(req: AuthRequest, res: Response) {
   try {
+    if (!req.user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
     const { title, content } = req.body;
-    const userId = (req as any).user.userId;
+    const userId = req.user.userId;
 
     if (typeof title !== "string" || typeof content !== "string") {
       return res.status(400).json({ message: "Invalid input" });
@@ -32,12 +37,15 @@ export async function createNote(req: Request, res: Response) {
 // ===============================
 // GET NOTE (REDIS CACHED)
 // ===============================
-export async function getNote(req: Request, res: Response) {
+export async function getNote(req: AuthRequest, res: Response) {
   try {
+    if (!req.user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
     const noteId = req.params.id;
     const cacheKey = `note:${noteId}`;
 
-    // Redis cache
     const cached = await redis.get(cacheKey);
     if (cached) {
       return res.json(JSON.parse(cached));
@@ -51,8 +59,11 @@ export async function getNote(req: Request, res: Response) {
       return res.status(404).json({ message: "Note not found" });
     }
 
-    await redis.set(cacheKey, JSON.stringify(note), "EX", 60);
+    if (note.ownerId !== req.user.userId) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
 
+    await redis.set(cacheKey, JSON.stringify(note), "EX", 60);
     res.json(note);
   } catch (error) {
     console.error("Get note error:", error);
@@ -61,38 +72,42 @@ export async function getNote(req: Request, res: Response) {
 }
 
 // ===============================
-// UPDATE NOTE (AUTOSAVE-SAFE)
+// UPDATE NOTE (AUTOSAVE SAFE)
 // ===============================
-export async function updateNote(req: Request, res: Response) {
+export async function updateNote(req: AuthRequest, res: Response) {
   try {
+    // 🔍 TEMP DEBUG — REMOVE AFTER CONFIRMATION
+    console.log("AUTOSAVE USER:", req.user);
+
+    if (!req.user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
     const noteId = req.params.id;
     const { content } = req.body;
-    const userId = (req as any).user.userId;
+    const userId = req.user.userId;
 
-    // ✅ Allow empty string, reject non-string
+    // ✅ allow empty string, reject non-string
     if (typeof content !== "string") {
       return res.status(400).json({ message: "Invalid content" });
     }
 
-    const existingNote = await prisma.note.findUnique({
-      where: { id: noteId },
+    const note = await prisma.note.findFirst({
+      where: {
+        id: noteId,
+        ownerId: userId,
+      },
     });
 
-    if (!existingNote) {
+    if (!note) {
       return res.status(404).json({ message: "Note not found" });
     }
 
-    if (existingNote.ownerId !== userId) {
-      return res.status(403).json({ message: "Not authorized" });
-    }
-
-    // Authoritative update
     await prisma.note.update({
       where: { id: noteId },
       data: { content },
     });
 
-    // Snapshot for version history
     await prisma.noteVersion.create({
       data: {
         noteId,
@@ -100,7 +115,6 @@ export async function updateNote(req: Request, res: Response) {
       },
     });
 
-    // Cache invalidation
     await redis.del(`note:${noteId}`);
 
     res.json({ success: true });

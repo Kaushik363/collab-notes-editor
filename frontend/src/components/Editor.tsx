@@ -16,11 +16,11 @@ export default function Editor({
   const [content, setContent] = useState(initialContent);
 
   const hasJoined = useRef(false);
-  const emitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isApplyingRemoteUpdate = useRef(false);
+  const emitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // ===============================
-  // SOCKET SETUP
+  // SOCKET SETUP (REGISTER ONCE)
   // ===============================
   useEffect(() => {
     if (!socket.connected) socket.connect();
@@ -30,7 +30,7 @@ export default function Editor({
       hasJoined.current = true;
     }
 
-    socket.on("note-update", (payload: any) => {
+    const handler = (payload: any) => {
       const nextContent =
         typeof payload === "string"
           ? payload
@@ -40,12 +40,14 @@ export default function Editor({
 
       isApplyingRemoteUpdate.current = true;
       setContent(nextContent);
-    });
+    };
+
+    socket.on("note-update", handler);
 
     return () => {
-      socket.off("note-update");
+      socket.off("note-update", handler);
     };
-  }, [noteId]);
+  }, [noteId]); // 🔒 dependency size NEVER changes
 
   // ===============================
   // DEBOUNCED SOCKET EMIT
@@ -63,7 +65,10 @@ export default function Editor({
     }
 
     emitTimeoutRef.current = setTimeout(() => {
-      socket.emit("note-update", { noteId, content });
+      socket.emit("note-update", {
+        noteId,
+        content,
+      });
     }, SOCKET_DEBOUNCE_MS);
 
     return () => {
@@ -74,7 +79,7 @@ export default function Editor({
   }, [content, noteId]);
 
   // ===============================
-  // AUTOSAVE (SIMPLE & SAFE)
+  // AUTOSAVE (DB PERSISTENCE)
   // ===============================
   useEffect(() => {
     if (!noteId) return;
@@ -82,7 +87,9 @@ export default function Editor({
     const interval = setInterval(() => {
       fetch(`/notes/${noteId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         credentials: "include",
         body: JSON.stringify({ content }),
       });

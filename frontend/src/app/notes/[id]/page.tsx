@@ -1,4 +1,4 @@
-import { headers } from "next/headers";
+import { cookies } from "next/headers";
 import Editor from "@/components/Editor";
 
 export const dynamic = "force-dynamic";
@@ -10,18 +10,13 @@ export default async function NotePage({
 }) {
   const { id } = await params;
 
-  const h = await headers();
-  const cookie = h.get("cookie") ?? "";
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore.toString();
 
-  // 🔒 Get current origin dynamically (works locally + prod)
-  const host = h.get("host");
-  const protocol = process.env.NODE_ENV === "production" ? "https" : "http";
-  const origin = `${protocol}://${host}`;
-
-  const res = await fetch(`${origin}/notes/${id}`, {
+  const res = await fetch(`${process.env.API_URL}/notes/${id}`, {
     cache: "no-store",
     headers: {
-      cookie,
+      Cookie: cookieHeader, // ✅ THIS FIXES 401
     },
   });
 
@@ -36,7 +31,7 @@ export default async function NotePage({
       <h1 className="text-xl font-bold mb-4">{note.title}</h1>
 
       <Editor
-        key={note.id} // 🔒 critical
+        key={note.id}
         noteId={note.id}
         initialContent={note.content}
       />
