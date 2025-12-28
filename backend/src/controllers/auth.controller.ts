@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { prisma } from "../prisma/client";
 
+
 export async function register(req: Request, res: Response) {
   const { email, password } = req.body;
 
@@ -27,7 +28,27 @@ export async function register(req: Request, res: Response) {
     },
   });
 
-  res.status(201).json({ message: "User registered", userId: user.id });
+  const token = jwt.sign(
+    { userId: user.id },
+    process.env.JWT_SECRET as string,
+    { expiresIn: "7d" }
+  );
+
+  res.cookie("accessToken", token, {
+    httpOnly: true,
+    secure: false,     
+    sameSite: "lax",
+    path: "/",           
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+
+  res.status(201).json({
+    user: {
+      id: user.id,
+      email: user.email,
+    },
+  });
 }
 
 export async function login(req: Request, res: Response) {
@@ -53,5 +74,16 @@ export async function login(req: Request, res: Response) {
     { expiresIn: "7d" }
   );
 
-  res.json({ token });
+  res.cookie("accessToken", token, {
+    httpOnly: true,
+    secure: false,        
+    sameSite: "lax",
+    path: "/",            
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+
+  res.status(200).json({
+    user: { id: user.id, email: user.email },
+  });
 }

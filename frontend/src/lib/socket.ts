@@ -1,10 +1,9 @@
-import { io } from "socket.io-client";
+import { io, Socket } from "socket.io-client";
 
-export const socket = io(
-  process.env.NEXT_PUBLIC_WS_URL as string,
+export const socket: Socket = io(
+  process.env.NEXT_PUBLIC_WS_URL || "http://localhost:3000",
   {
+    withCredentials: true,
     autoConnect: false,
   }
 );
-
-console.log("WS URL:", process.env.NEXT_PUBLIC_WS_URL);

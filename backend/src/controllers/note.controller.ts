@@ -2,14 +2,16 @@ import { Request, Response } from "express";
 import { prisma } from "../prisma/client";
 import { redis } from "../config/redis";
 
-//create note
+// ===============================
+// CREATE NOTE
+// ===============================
 export async function createNote(req: Request, res: Response) {
   try {
     const { title, content } = req.body;
     const userId = (req as any).user.userId;
 
-    if (!title || !content) {
-      return res.status(400).json({ message: "Title and content required" });
+    if (typeof title !== "string" || typeof content !== "string") {
+      return res.status(400).json({ message: "Invalid input" });
     }
 
     const note = await prisma.note.create({
@@ -27,20 +29,20 @@ export async function createNote(req: Request, res: Response) {
   }
 }
 
-// get note from redis
+// ===============================
+// GET NOTE (REDIS CACHED)
+// ===============================
 export async function getNote(req: Request, res: Response) {
   try {
     const noteId = req.params.id;
     const cacheKey = `note:${noteId}`;
 
-    // check redis
+    // Redis cache
     const cached = await redis.get(cacheKey);
     if (cached) {
-      console.log("Redis cache hit");
       return res.json(JSON.parse(cached));
     }
 
-    // get from db
     const note = await prisma.note.findUnique({
       where: { id: noteId },
     });
@@ -49,7 +51,6 @@ export async function getNote(req: Request, res: Response) {
       return res.status(404).json({ message: "Note not found" });
     }
 
-    // add to cache(redis)
     await redis.set(cacheKey, JSON.stringify(note), "EX", 60);
 
     res.json(note);
@@ -59,17 +60,19 @@ export async function getNote(req: Request, res: Response) {
   }
 }
 
-//update note
+// ===============================
+// UPDATE NOTE (AUTOSAVE-SAFE)
+// ===============================
 export async function updateNote(req: Request, res: Response) {
   try {
     const noteId = req.params.id;
     const { content } = req.body;
     const userId = (req as any).user.userId;
 
-    if (!content) {
-      return res.status(400).json({ message: "Content is required" });
+    // ✅ Allow empty string, reject non-string
+    if (typeof content !== "string") {
+      return res.status(400).json({ message: "Invalid content" });
     }
-
 
     const existingNote = await prisma.note.findUnique({
       where: { id: noteId },
@@ -83,11 +86,13 @@ export async function updateNote(req: Request, res: Response) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const updatedNote = await prisma.note.update({
+    // Authoritative update
+    await prisma.note.update({
       where: { id: noteId },
       data: { content },
     });
 
+    // Snapshot for version history
     await prisma.noteVersion.create({
       data: {
         noteId,
@@ -95,9 +100,10 @@ export async function updateNote(req: Request, res: Response) {
       },
     });
 
+    // Cache invalidation
     await redis.del(`note:${noteId}`);
 
-    res.json(updatedNote);
+    res.json({ success: true });
   } catch (error) {
     console.error("Update note error:", error);
     res.status(500).json({ message: "Failed to update note" });

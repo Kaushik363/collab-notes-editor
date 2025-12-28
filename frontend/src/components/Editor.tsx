@@ -1,62 +1,105 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { socket } from "@/lib/socket";
 
-export type EditorProps = {
+const SOCKET_DEBOUNCE_MS = 200;
+const AUTOSAVE_INTERVAL_MS = 5000;
+
+export default function Editor({
+  noteId,
+  initialContent,
+}: {
   noteId: string;
   initialContent: string;
-};
-
-export default function Editor({ noteId, initialContent }: EditorProps) {
+}) {
   const [content, setContent] = useState(initialContent);
-  const [presenceMsg, setPresenceMsg] = useState<string | null>(null);
 
+  const hasJoined = useRef(false);
+  const emitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isApplyingRemoteUpdate = useRef(false);
+
+  // ===============================
+  // SOCKET SETUP
+  // ===============================
   useEffect(() => {
-    socket.connect();
-    socket.emit("join-note", noteId);
+    if (!socket.connected) socket.connect();
 
-    // update
-    socket.on("note-update", (newContent: string) => {
-      setContent(newContent);
-    });
+    if (!hasJoined.current) {
+      socket.emit("join-note", noteId);
+      hasJoined.current = true;
+    }
 
-    // Presence
-    socket.on("presence", (msg: string) => {
-      setPresenceMsg(msg);
-      setTimeout(() => setPresenceMsg(null), 2000);
+    socket.on("note-update", (payload: any) => {
+      const nextContent =
+        typeof payload === "string"
+          ? payload
+          : payload?.content;
+
+      if (typeof nextContent !== "string") return;
+
+      isApplyingRemoteUpdate.current = true;
+      setContent(nextContent);
     });
 
     return () => {
       socket.off("note-update");
-      socket.off("presence");
-      socket.disconnect();
     };
   }, [noteId]);
 
-  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const value = e.target.value;
-    setContent(value);
+  // ===============================
+  // DEBOUNCED SOCKET EMIT
+  // ===============================
+  useEffect(() => {
+    if (!socket.connected) return;
 
-    socket.emit("note-update", {
-      noteId,
-      content: value,
-    });
+    if (isApplyingRemoteUpdate.current) {
+      isApplyingRemoteUpdate.current = false;
+      return;
+    }
+
+    if (emitTimeoutRef.current) {
+      clearTimeout(emitTimeoutRef.current);
+    }
+
+    emitTimeoutRef.current = setTimeout(() => {
+      socket.emit("note-update", { noteId, content });
+    }, SOCKET_DEBOUNCE_MS);
+
+    return () => {
+      if (emitTimeoutRef.current) {
+        clearTimeout(emitTimeoutRef.current);
+      }
+    };
+  }, [content, noteId]);
+
+  // ===============================
+  // AUTOSAVE (SIMPLE & SAFE)
+  // ===============================
+  useEffect(() => {
+    if (!noteId) return;
+
+    const interval = setInterval(() => {
+      fetch(`/notes/${noteId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ content }),
+      });
+    }, AUTOSAVE_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [noteId, content]);
+
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setContent(e.target.value);
   }
 
   return (
-    <div>
-      {presenceMsg && (
-        <div className="mb-2 text-sm text-green-600">
-          {presenceMsg}
-        </div>
-      )}
-
-      <textarea
-        className="w-full h-[75vh] border rounded p-4 text-sm"
-        value={content}
-        onChange={handleChange}
-      />
-    </div>
+    <textarea
+      className="w-full h-[75vh] border rounded p-4"
+      value={content}
+      onChange={handleChange}
+    />
   );
 }
